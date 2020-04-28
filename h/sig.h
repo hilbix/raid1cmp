@@ -45,7 +45,7 @@ sig_init(int sig, sig_fn *action, void *user)
 static void
 sig_save(struct sig_set *old, int sig)
 {
-  FATAL(!old);
+  FATAL(!old, "missing pointer");
   old->sig	= sig;
   Osigaction(sig, NULL, &old->sa);
   Osigprocmask(SIG_UNBLOCK, NULL, &old->mask);
@@ -54,7 +54,7 @@ sig_save(struct sig_set *old, int sig)
 static void
 sig_load(struct sig_set *old)
 {
-  FATAL(!old);
+  FATAL(!old, "missing pointer");
   Osigprocmask(SIG_SETMASK, &old->mask, NULL);
   sig_set(old);
 }
