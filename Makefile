@@ -12,7 +12,7 @@ all:	$(PROG)
 
 .PHONY:	clean
 clean:
-	$(RM) $(PROG)
+	$(RM) $(PROG) *.o
 
 $(PROG).o:	$(wildcard h/*.h)
 
