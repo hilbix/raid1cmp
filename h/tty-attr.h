@@ -2,14 +2,14 @@
 
 #include "oops.h"
 
-struct tty_cbreak
+struct tty_attr
   {
     int			tty, own;
     struct termios	att, org;
   };
 
 static void
-tty_init(struct tty_cbreak *tty, int fd)
+tty_init(struct tty_attr *tty, int fd)
 {
   tty->own	= 0;
   tty->tty	= fd;
@@ -19,7 +19,7 @@ tty_init(struct tty_cbreak *tty, int fd)
 }
 
 static void
-tty_orig(struct tty_cbreak *tty)
+tty_orig(struct tty_attr *tty)
 {
   if (!tty->own)
     return;
@@ -28,14 +28,14 @@ tty_orig(struct tty_cbreak *tty)
 }
 
 static void
-tty_own(struct tty_cbreak *tty)
+tty_own(struct tty_attr *tty)
 {
   Otcsetattr(tty->tty, TCSADRAIN, &tty->att);
   tty->own	= 1;
 }
 
 static void
-tty_cbreak(struct tty_cbreak *tty)
+tty_cbreak(struct tty_attr *tty)
 {
   tty->att	= tty->org;
   tty->att.c_lflag	&= ~(ICANON|ECHO);
@@ -48,7 +48,7 @@ tty_cbreak(struct tty_cbreak *tty)
 }
 
 static void
-tty_raw(struct tty_cbreak *tty)
+tty_raw(struct tty_attr *tty)
 {
   tty->att	= tty->org;
   tty->att.c_lflag	&= ~(ICANON|ECHO|ISIG|IEXTEN);
