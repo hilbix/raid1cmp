@@ -3,12 +3,7 @@
 #define	_GNU_SOURCE
 
 #include <stdint.h>
-#include <stdarg.h>
 #include <ctype.h>
-
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 
 #include "h/oops.h"
 #include "h/tty-attr.h"
@@ -27,6 +22,8 @@ struct r1c_dev
     int		directio;
     uint64_t	blocks;
     const char	*name;
+    int		nr;
+    struct stat	stat;
   };
 
 #define	CONF	r1c_conf *C
@@ -297,28 +294,47 @@ check_directio(CONF, const char *name)
 }
 
 static void
+ensure_unique_dev(CONF, r1c_dev *dev)
+{
+  r1c_dev	*p;
+
+  Ofstat(dev->fd, &dev->stat);
+  for (p=C->dev; p; p=p->next)
+    {
+
+      if (!strcmp(dev->name, p->name))
+        OOPS("please use unique names", "dev %d and dev %d have the same name", p->nr, dev->nr);
+    }
+}
+
+static void
 init_dev(CONF, const char * const *args)
 {
   r1c_dev	**p;
+  int		nr;
 
   p	= &C->dev;
-  while (*args)
+  for (nr=1; *args; nr++)
     {
       r1c_dev	*dev;
       uint64_t	len;
 
       dev		= alloc0(sizeof *dev);
-      dev->name		= *args++;
+      dev->nr		= nr;
+      dev->name		= Ostrdup(*args++);
       dev->directio	= check_directio(C, dev->name);
       dev->fd		= open(dev->name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|(dev->directio ? O_DIRECT : 0));
       if (dev->fd<0)
-        OOPS(dev->name);
+        OOPS(dev->name, "cannot open");
 
       len		= lseek(dev->fd, (off_t)0, SEEK_END);
       if (len % C->blocksize)
       info(C, "dev %s directio %d size %llu not multiple of blocksize %llu: %llu remainder", dev->name, dev->directio, (unsigned long long)len, (unsigned long long)C->blocksize, (unsigned long long)(len%C->blocksize));
       dev->blocks	= len/C->blocksize;
       info(C, "dev %s directio %d blocks %llu", dev->name, dev->directio, dev->blocks);
+
+      ensure_unique_dev(C, dev);
+
       dev->next		= *p;
       *p		= dev;
       p			= &dev->next;
