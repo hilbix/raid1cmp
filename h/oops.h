@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdlib.h>                                                                                                
+#include <string.h>                                                                                                
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -35,8 +36,10 @@
  * int functioname()
  * but OOPSes when an error occurs.
  */
-#define	O(A,B...)	static void O##A(Otwo(B)) { if (A(O2nd(B))) OOPS(#A); }
-#define	I(A,B...)	static void O##A(Otwo(B)) { while (A(O2nd(B))) { if (errno!=EINTR) OOPS(#A); } }
+#define	C(A,B...)	A(B)
+#define	O(A,B...)	static void O##A(Otwo(B)) { if (C(A,O2nd(B))) OOPS(#A "() failed"); }
+#define	I(A,B...)	static void O##A(Otwo(B)) { while (C(A,O2nd(B))) { if (errno!=EINTR) OOPS(#A "() failed"); } }
+#define	R(X,A,B...)	static X O##A(Otwo(B)) { X _; _=C(A,O2nd(B)); if (!_) OOPS(#A "() failed"); return _; }
 
 /* Just bail out on OOPS() for now	*/
 
@@ -64,6 +67,16 @@ O(sigaddset,sigset_t *,set, int,signum);
 O(sigdelset,sigset_t *,set, int,signum);
 I(tcgetattr,int,fd, struct termios *,termios_p);
 I(tcsetattr,int,fd, int,optional_actions, const struct termios *,termios_p);
+O(setenv,const char *,name, const char *,value, int,overwrite);
+O(unsetenv,const char *,name);
+R(struct tm *,gmtime_r,const time_t *,timep, struct tm *,result);
+R(struct tm *,localtime_r,const time_t *,timep, struct tm *,result);
+R(void *,malloc,size_t,size);
+R(void *,realloc,void *,ptr,size_t,size);
+R(char *,strdup,const char *,s);
+R(char *,strndup,const char *,s, size_t,n);
+
+static void Otime(time_t *t) { if (time(t)==(time_t)-1) OOPS("time() failed"); }
 
 #undef	O
 #undef	I
