@@ -4,10 +4,15 @@
 #ifndef	OOPS
 
 #include <stdio.h>
+
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
-#include <stdlib.h>                                                                                                
-#include <string.h>                                                                                                
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -44,14 +49,35 @@
 /* Just bail out on OOPS() for now	*/
 
 #define	OOPS(A...)	OOPS_(__FILE__, __LINE__, __func__, A, NULL)
-#define	FATAL(A,B...)	do { if (A) OOPS_(__FILE__, __LINE__, __func__, #A, ##B, NULL); } while (0)
+#define	FATAL(A,B...)	do { if (A) OOPS(#A, ##B); } while (0)
 
 static void
-OOPS_(const char *name, int line, const char *fn, const char *err, ...)
+OOPS_(const char *name, int line, const char *fn, const char *err, const char *more, ...)
 {
-  fprintf(stderr, "OOPS %s:%d: in %s: ", name, line, fn);
-  perror(err);
-  exit(23); abort(); for(;;);
+  int e	= errno;
+
+  fprintf(stderr, "OOPS %s:%d", name, line);
+  if (fn)
+    fprintf(stderr, ": in %s", fn);
+  if (more)
+    {
+      va_list	list;
+
+      fprintf(stderr, ": ");
+      va_start(list, more);
+      vfprintf(stderr, more, list);
+      va_end(list);
+    }
+  if (err)
+    fprintf(stderr, ": %s", err);
+  if (e)
+    fprintf(stderr, ": %s", strerror(e));
+  fprintf(stderr, "\n");
+  fflush(stderr);
+  exit(23);	/* run atexit() */
+  /* should never return */
+  abort();
+  for(;;);
 }
 
 /* The wrappers needed	*/
@@ -75,6 +101,9 @@ R(void *,malloc,size_t,size);
 R(void *,realloc,void *,ptr,size_t,size);
 R(char *,strdup,const char *,s);
 R(char *,strndup,const char *,s, size_t,n);
+O(stat,const char *,pathname, struct stat *,statbuf);
+O(fstat,int,fd, struct stat *,statbuf);
+O(lstat,const char *,pathname, struct stat *,statbuf);
 
 static void Otime(time_t *t) { if (time(t)==(time_t)-1) OOPS("time() failed"); }
 
