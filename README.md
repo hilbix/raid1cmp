@@ -1,3 +1,5 @@
+> **Not completed yet**
+
 # RAID1cmd
 
 Get a list of the position of the mismatches:
