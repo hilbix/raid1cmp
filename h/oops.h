@@ -107,7 +107,9 @@ O(lstat,const char *,pathname, struct stat *,statbuf);
 
 static void Otime(time_t *t) { if (time(t)==(time_t)-1) OOPS("time() failed"); }
 
+#undef	R
 #undef	O
 #undef	I
+#undef	C
 #endif
 
