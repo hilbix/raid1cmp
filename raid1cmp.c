@@ -33,7 +33,6 @@ typedef struct r1c_conf
     uint64_t	round, block, errors, mismatches;
 
     uint64_t	blocks;
-    BUF		directio_str, dev_str;
 
     r1c_dev	*dev;
 
@@ -43,7 +42,7 @@ typedef struct r1c_conf
     struct tty_attr	tty;
 
     uint64_t	blocksize, blockcount, chunksize;
-    const char	*directio;
+    BUF		directio, devs;
   } r1c_conf;
 
 
@@ -199,9 +198,9 @@ inf(CONF)
   infu(C, "BLOCKSIZE",	C->blocksize);
   infu(C, "BLOCKCOUNT",	C->blockcount);
   infu(C, "CHUNKSIZE",	C->chunksize);
-  infs(C, "DIRECTIO",	Bgets(C->directio_str));
+  infs(C, "DIRECTIO",	Bgets(C->directio));
   infu(C, "PID",	(uint64_t)getpid());
-  infs(C, "DEVS",	Bgets(C->dev_str));
+  infs(C, "DEVS",	Bgets(C->devs));
   infu(C, "BLOCK",	C->block);
   infu(C, "BLOCKCNT",	C->blocks);
   infu(C, "POS",	C->block*C->blocksize);
@@ -236,7 +235,6 @@ static void
 init_env(CONF)
 {
   uint64_t	tmp;
-  const char	*s;
 
   tmp	= env64("BLOCKSIZE");
   while (tmp&(tmp-1))
@@ -268,12 +266,7 @@ init_env(CONF)
   C->blockcount	= tmp;
   C->chunksize	= tmp * C->blocksize;
 
-  s	= getenv("DIRECTIO");
-  if (s && !*s)
-    s	= 0;
-  if (s)
-    s	= Ostrdup(s);
-  C->directio	= s; 
+  C->directio	= Badds(Bnew(), getenv("DIRECTIO"));
 }
 
 /* return 1 if name uses DIRECTIO	*/
@@ -281,17 +274,18 @@ static int
 check_directio(CONF, const char *name)
 {
   size_t	len;
-  char		*pos;
+  const char	*pos, *buf;
 
-  if (!C->directio)
+  if (!Blen(C->directio))
     return 1;
 
-  pos	= strstr(C->directio, name);
+  buf	= Bgets(C->directio);
+  pos	= strstr(buf, name);
   if (!pos)
     return 0;
 
   len	= strlen(name);
-  return (!pos[len] || isspace(pos[len])) && (pos==C->directio || isspace(pos[-1]));
+  return (!pos[len] || isspace(pos[len])) && (pos==buf || isspace(pos[-1]));
 }
 
 static int
@@ -395,14 +389,16 @@ init_dev(CONF, const char * const *args)
     OOPS("too few devices to operate on");
 
   C->blocks	= C->dev->blocks;
-  Breset(C->directio_str);
+  Breset(C->directio);
+  C->devs	= Bnew();
   for (d=C->dev; d; d=d->next)
-    if (d->directio)
-      {
-        if (Blen(C->directio_str))
-          Baddc(C->directio_str, ' ');
-        Badds(C->directio_str, d->name);
-      }
+    {
+      Baddc(Badds(C->devs, d->name), ' ');
+      if (d->directio)
+        Baddc(Badds(C->directio, d->name), ' ');
+    }
+  Bshorten(C->devs, 1);
+  Bshorten(C->directio, 1);
 }
 
 /*
