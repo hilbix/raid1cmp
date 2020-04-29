@@ -8,6 +8,7 @@
 #include "h/oops.h"
 #include "h/tty-attr.h"
 #include "h/sig.h"
+#include "h/buf.h"
 
 #define	KiB1	(1024)
 #define	KiB4	(4096)
@@ -32,7 +33,7 @@ typedef struct r1c_conf
     uint64_t	round, block, errors, mismatches;
 
     uint64_t	blocks;
-    const char	*directio_str, *dev_str;
+    BUF		directio_str, dev_str;
 
     r1c_dev	*dev;
 
@@ -198,9 +199,9 @@ inf(CONF)
   infu(C, "BLOCKSIZE",	C->blocksize);
   infu(C, "BLOCKCOUNT",	C->blockcount);
   infu(C, "CHUNKSIZE",	C->chunksize);
-  infs(C, "DIRECTIO",	C->directio_str);
+  infs(C, "DIRECTIO",	Bgets(C->directio_str));
   infu(C, "PID",	(uint64_t)getpid());
-  infs(C, "DEVS",	C->dev_str);
+  infs(C, "DEVS",	Bgets(C->dev_str));
   infu(C, "BLOCK",	C->block);
   infu(C, "BLOCKCNT",	C->blocks);
   infu(C, "POS",	C->block*C->blocksize);
@@ -293,24 +294,66 @@ check_directio(CONF, const char *name)
   return (!pos[len] || isspace(pos[len])) && (pos==C->directio || isspace(pos[-1]));
 }
 
-static void
-ensure_unique_dev(CONF, r1c_dev *dev)
+static int
+cmp_stat(struct stat *a, struct stat *b)
+{
+  if ((a->st_mode ^ b->st_mode) & S_IFMT)return 1;	/* different types	*/
+  switch (a->st_mode & S_IFMT)
+    {
+    case S_IFBLK:
+      if (a->st_rdev != b->st_rdev)	return 2;	/* different devs	*/
+      break;
+    case S_IFREG:
+      if (a->st_dev != b->st_dev)	return 3;	/* on different devices	*/
+      if (a->st_ino != b->st_ino)	return 4;	/* different inodes	*/
+      break;
+    }
+  return 0;
+}
+
+static int
+known_dev(CONF, r1c_dev *d)
 {
   r1c_dev	*p;
 
-  Ofstat(dev->fd, &dev->stat);
+  Ofstat(d->fd, &d->stat);
+  switch (d->stat.st_mode & S_IFMT)
+    {
+    case S_IFCHR:	OOPS("character special device",	"cannot operate on dev %d: %s", d->nr, d->name);
+    case S_IFSOCK:	OOPS("Unix domain socket",		"cannot operate on dev %d: %s", d->nr, d->name);
+    case S_IFLNK:	OOPS("softlink",			"cannot operate on dev %d: %s", d->nr, d->name);
+    case S_IFIFO:	OOPS("FIFO",				"cannot operate on dev %d: %s", d->nr, d->name);
+    case S_IFDIR:	OOPS("directory",			"cannot operate on dev %d: %s", d->nr, d->name);
+    default:		OOPS("unknown type",			"cannot operate on dev %d: %s", d->nr, d->name);
+    case S_IFBLK:
+    case S_IFREG:
+      break;
+    }
+
   for (p=C->dev; p; p=p->next)
     {
-
-      if (!strcmp(dev->name, p->name))
-        OOPS("please use unique names", "dev %d and dev %d have the same name", p->nr, dev->nr);
+      /* If you accidentally specify something twice,
+       * we gracefully ignore it
+       */
+      if (!strcmp(d->name, p->name))
+        {
+          info(C, "dev %d ignored: dev %d has the same name %s", d->nr, p->nr, p->name);
+          return 1;
+        }
+      /* if you address the same thing via different names,
+       * you are probably not aware of this,
+       * so better bail out.
+       */
+      if (!cmp_stat(&d->stat, &p->stat))
+        OOPS("please use different devices", "dev %d and dev %d are the same", p->nr, d->nr);
     }
+  return 0;
 }
 
 static void
 init_dev(CONF, const char * const *args)
 {
-  r1c_dev	**p;
+  r1c_dev	**p, *d;
   int		nr;
 
   p	= &C->dev;
@@ -323,17 +366,26 @@ init_dev(CONF, const char * const *args)
       dev->nr		= nr;
       dev->name		= Ostrdup(*args++);
       dev->directio	= check_directio(C, dev->name);
-      dev->fd		= open(dev->name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|(dev->directio ? O_DIRECT : 0));
+      dev->fd		= open(dev->name, O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK|(dev->directio ? O_DIRECT : 0));
       if (dev->fd<0)
-        OOPS(dev->name, "cannot open");
+        OOPS(dev->name, "cannot open %s DIRECTIO", dev->directio ? "with" : "without");
+
+      if (known_dev(C, dev))
+        {
+          free(dev);
+          continue;
+        }
 
       len		= lseek(dev->fd, (off_t)0, SEEK_END);
-      if (len % C->blocksize)
-      info(C, "dev %s directio %d size %llu not multiple of blocksize %llu: %llu remainder", dev->name, dev->directio, (unsigned long long)len, (unsigned long long)C->blocksize, (unsigned long long)(len%C->blocksize));
-      dev->blocks	= len/C->blocksize;
-      info(C, "dev %s directio %d blocks %llu", dev->name, dev->directio, dev->blocks);
 
-      ensure_unique_dev(C, dev);
+      if (len % C->blocksize)
+        info(C, "dev %s directio %d size %llu not multiple of blocksize %llu"
+          ": %llu bytes remain",
+          dev->name, dev->directio, (unsigned long long)len, (unsigned long long)C->blocksize,
+          (unsigned long long)(len%C->blocksize));
+
+      dev->blocks	= len/C->blocksize;
+      info(C, "dev %s has %llu blocks (DIRECTIO %d)", dev->name, (unsigned long long)dev->blocks, dev->directio);
 
       dev->next		= *p;
       *p		= dev;
@@ -342,6 +394,15 @@ init_dev(CONF, const char * const *args)
   if (!C->dev || !C->dev->next)
     OOPS("too few devices to operate on");
 
+  C->blocks	= C->dev->blocks;
+  Breset(C->directio_str);
+  for (d=C->dev; d; d=d->next)
+    if (d->directio)
+      {
+        if (Blen(C->directio_str))
+          Baddc(C->directio_str, ' ');
+        Badds(C->directio_str, d->name);
+      }
 }
 
 /*
