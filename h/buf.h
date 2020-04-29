@@ -142,7 +142,7 @@ F(room, B b)
 
 /* append data to the bucket chain	*/
 static void
-F(add, B b, const void *ptr, size_t len)
+F(add, B b, const void *ptr, long len)
 {
   long	left;
 
@@ -197,6 +197,74 @@ F(clean, B b)
   FATAL(tot != b->total, "BUF size mismatch, expected %lu got %lu", tot, b->total);
 }
 
+/* empty the BUF	*/
+static void
+F(reset, B b)
+{
+  C c;
+
+  for (c=F(head, b); c; c=F(next, c))
+    c->a = c->b = 0;
+  b->total	= 0;
+}
+
+/* remove from head	*/
+static void
+F(advance, B b, long len)
+{
+  C c;
+
+  FATAL(len<=0);
+
+  if (len >= b->total)
+    return F(reset, b);
+
+  b->total	-= len;
+  for (c=F(head, b); c; c=F(next, c))
+    {
+      const long n = c->b - c->a;
+
+      if (len <= n)
+        {
+          c->a		+= len;
+          return;
+        }
+      FATAL(n<0);
+      c->a = c->b = 0;
+      len	-= n;
+    }
+  OOPS("BUF underrun", "%d left, total now %d", len, b->total);
+}
+
+/* remove from tail	*/
+static void
+F(shorten, B b, long len)
+{
+  C c;
+
+  FATAL(len<=0);
+
+  if (len >= b->total)
+    return F(reset, b);
+
+  c	= b->tail;
+  FATAL(!c);
+
+  const long n	= c->b - c->a;
+  if (n < len)
+    {
+      FATAL(n <= 0);
+      len	-= n;
+      c->a = c->b = 0;
+      F(clean, b);
+    }
+
+  b->tail->b	-= len;
+  b->total	-= len;
+
+  FATAL(b->tail->b < 0, "BUF underrun %ld, total now %d", b->tail->b, b->total);
+}
+
 /*
  * Public Interface
  */
@@ -219,11 +287,9 @@ static BUF
 Breset(BUF _)
 {
   B b = _.B;
-  C c;
 
-  FATAL(!b, "BUF not initialized with Bnew()");
-  for (c=F(head, b); c; c=F(next, c))
-    c->a = c->b = 0;
+  FATAL(!b, "BUF not initialized");
+  F(reset, b);
   return _;
 }
 
@@ -233,6 +299,7 @@ Baddc(BUF _, char c)
 {
   B b = _.B;
 
+  FATAL(!b, "BUF not initialized");
   if (!F(room, b))
     F(expand, b, 1);
   b->tail->buf[b->tail->b++] = c;
@@ -242,11 +309,12 @@ Baddc(BUF _, char c)
 
 /* add a memory area to BUF	*/
 static BUF
-Badd(BUF _, const void *ptr, size_t len)
+Badd(BUF _, const void *ptr, long len)
 {
   if (!len)
     return _;
-  FATAL(!ptr, "NULL pointer with length %llu", (unsigned long long)len);
+  FATAL(len<0, "negative length %ld", len);
+  FATAL(!ptr, "NULL pointer with length %ld", len);
   F(add, _.B, ptr, len);
   return _;
 }
@@ -266,6 +334,7 @@ BaddB(BUF _, BUF a)
   C	c;
   int	left;
 
+  FATAL(!b, "BUF not initialized");
   left	= F(room, b);
   if (left < a.B->total)
     F(expand, b, a.B->total - left);
@@ -282,6 +351,7 @@ Bgets(BUF _)
 {
   B b = _.B;
 
+  FATAL(!b, "BUF not initialized");
   if (b->head != b->tail || !F(room, b))
     F(clean, b);	/* leaves at least 1 byte	*/
   if (!b->tail)
@@ -291,10 +361,100 @@ Bgets(BUF _)
 }
 
 /* Get the size of data in BUF	*/
-static size_t
+static long
 Blen(BUF _)
 {
-  return _.B->total;
+  B b = _.B;
+
+  FATAL(!b, "BUF not initialized");
+  return b->total;
+}
+
+/* remove from the beginning	*/
+static BUF
+Badvance(BUF _, long len)
+{
+  B b = _.B;
+
+  if (!len)
+    return _;
+  FATAL(len<0, "negative length %ld", len);
+  FATAL(!b, "BUF not initialized");
+  F(advance, b, len);
+  return _;
+}
+
+/* shorten at the end	*/
+static BUF
+Bshorten(BUF _, long len)
+{
+  B b = _.B;
+
+  if (!len)
+    return _;
+  FATAL(len<0, "negative length %ld", len);
+  FATAL(!b, "BUF not initialized");
+  F(shorten, b, len);
+  return _;
+}
+
+/* advance head (n>0) or shorten tail (n<0)	*/
+static BUF
+Beat(BUF _, long n)
+{
+  B b = _.B;
+
+  if (!n)
+    return _;
+  FATAL(!b, "BUF not initialized");
+  if (n>0)
+    F(advance, b, n);
+  else
+    F(shorten, b, -n);
+  return _;
+}
+
+/* cut buffer from a starting position with the given length	*/
+static BUF
+Bcut(BUF _, long start, long len)
+{
+  B b = _.B;
+
+  if (!len)
+    return _;
+  FATAL(len<0, "negative length %ld", len);
+  FATAL(start<0, "negative starting point %ld", start);
+  FATAL(!b, "BUF not initialized");
+  if (!start)
+    return Badvance(_, len);
+  if (start >= b->total)
+    return _;
+  if (start+len >= b->total)
+    return Bshorten(_, b->total-start);
+
+  OOPS("not yet implemented", "%ld %ld", start, len);
+}
+
+/* insert into buffer at some a starting position */
+static BUF
+Binsert(BUF _, long start, const void *ptr, long len)
+{
+  B b = _.B;
+
+  if (!len)
+    return _;
+  FATAL(len<0, "negative length %ld", len);
+  FATAL(start<0, "negative starting point %ld", start);
+  FATAL(!ptr, "NULL pointer with length %ld", len);
+  FATAL(!b, "BUF not initialized");
+  if (b->total < start)
+    return Badd(_, ptr, len);
+#if 0
+  if (!start)
+    return Bprep(_, ptr, len);
+#endif
+
+  OOPS("not yet implemented", "%ld %ld", start, len);
 }
 
 #undef	ALLOC
